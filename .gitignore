@@ -1,0 +1,16 @@
+# Python cache artifacts
+__pycache__/
+*.py[cod]
+
+# Local env
+.env
+
+# Generated runtime outputs
+code/output/
+SurveyBench/*.log
+
+# Large local assets and model/data snapshots
+code/sf_assets/
+
+# IDE local workspace
+*.code-workspace

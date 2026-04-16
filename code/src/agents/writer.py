@@ -122,6 +122,10 @@ class subsectionWriter():
                 section_paper_texts[i].append(paper_texts)
 
         max_section_threads = 100
+        try:
+            max_section_threads = max(1, int(os.getenv("SF_MAX_SECTION_THREADS", "100")))
+        except ValueError:
+            max_section_threads = 100
 
         def write_subsection_wrapper(args):
             try:
@@ -177,6 +181,10 @@ class subsectionWriter():
         final_section_content = copy.deepcopy(section_content_even)
 
         max_section_threads = 100
+        try:
+            max_section_threads = max(1, int(os.getenv("SF_MAX_SECTION_THREADS", "100")))
+        except ValueError:
+            max_section_threads = 100
 
         def lce_wrapper(args):
             try:
@@ -391,9 +399,22 @@ class subsectionWriter():
             citation_text = match.group(1)
 
             individual_citations = citation_text.split(';')
+            numbered_citations = []
+            for citation in individual_citations:
+                c = citation.strip()
+                mapped_id = citation_to_ids.get(c)
+                if mapped_id is None:
+                    continue
+                mapped_title = ids_to_titles.get(mapped_id)
+                if mapped_title is None:
+                    continue
+                mapped_num = title_to_number.get(mapped_title)
+                if mapped_num is None:
+                    continue
+                numbered_citations.append(str(mapped_num))
 
-            numbered_citations = [str(title_to_number[ids_to_titles[citation_to_ids[citation.strip()]]]) for citation in individual_citations]
-
+            if not numbered_citations:
+                return ''
             return '[' + '; '.join(numbered_citations) + ']'
         
 

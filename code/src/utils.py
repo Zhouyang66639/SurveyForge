@@ -2,6 +2,7 @@ import math
 from typing import List
 import tiktoken
 import json
+import numpy as np
 import pandas as pd
 from datetime import timedelta
 import faiss
@@ -123,6 +124,8 @@ def sort_by_citation_period(documents, top_k=10, period=2):
     time_windows = get_time_windows(time_oldest, time_newest, period)
     # ratio = top_k/total_doc, for each period, get top_k*period documents
     total_doc = len(documents)
+    if total_doc == 0:
+        return []
     ratio = top_k / total_doc
     top_docs = []
     for start, end in time_windows:
@@ -143,11 +146,27 @@ def sort_by_citation_period(documents, top_k=10, period=2):
     
 def get_index_filter(arxivid_to_index, results_arxivid):
     # transfer arxivid to index in outline_rag_results
-    results_index = [0] * len(results_arxivid)
-    for i in range(len(results_arxivid)):
-        results_index[i] = arxivid_to_index[results_arxivid[i]]
-        
-    id_selector = faiss.IDSelectorArray(results_index)
+    results_index = [arxivid_to_index[arxivid] for arxivid in results_arxivid]
+    results_index_np = np.asarray(results_index, dtype="int64")
+
+    # FAISS python bindings differ by version:
+    # - old versions may accept IDSelectorArray(list)
+    # - faiss==1.7.x often requires (n, pointer) arguments
+    # Prefer IDSelectorBatch with pointer, then fall back.
+    try:
+        id_selector = faiss.IDSelectorBatch(
+            results_index_np.size,
+            faiss.swig_ptr(results_index_np),
+        )
+    except Exception:
+        try:
+            id_selector = faiss.IDSelectorArray(
+                results_index_np.size,
+                faiss.swig_ptr(results_index_np),
+            )
+        except Exception:
+            id_selector = faiss.IDSelectorArray(results_index)
+
     index_filter = {
         'id_selector': id_selector,
     }

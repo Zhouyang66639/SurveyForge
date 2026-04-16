@@ -47,22 +47,26 @@ def run_experiment(topic, exp_num, base_path):
     create_directory(save_path)
     
 
+    model = os.getenv("MODEL", "gpt-5-codex")
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    api_url = os.getenv("API_URL", "https://api2.tabcode.cc/openai")
+
     cmd = [
         "python", "main.py",
         "--topic", topic,
         "--gpu", "0",
         "--saving_path", save_path,
-        "--model", "gpt-4o-mini",# "claude-3-5-sonnet-20241022"
+        "--model", model,# "claude-3-5-sonnet-20241022"
         "--section_num", "7",
         "--subsection_len", "500",
         "--rag_num", "100",
         "--rag_max_out", "60",
         "--outline_reference_num", "1500",
         "--survey_outline_path", "./",
-        "--db_path", "./database",
-        "--embedding_model", "./gte-large-en-v1.5",
-        "--api_key", "",
-        "--api_url", "https://api.openai.com/v1/chat/completions"
+        "--db_path", "./sf_assets/database",
+        "--embedding_model", "./sf_assets/gte-large-en-v1.5",
+        "--api_key", api_key,
+        "--api_url", api_url
     ]
 
     
@@ -140,6 +144,9 @@ def run_experiment(topic, exp_num, base_path):
         return False
 
 def main():
+    if not os.getenv("OPENAI_API_KEY"):
+        print("ERROR: OPENAI_API_KEY is not set. Run: export OPENAI_API_KEY='your_api_key'")
+        return
 
     base_path = "./output/res"
     create_directory(base_path)

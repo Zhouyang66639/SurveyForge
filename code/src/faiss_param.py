@@ -52,6 +52,21 @@ def dependable_faiss_import(no_avx2: Optional[bool] = None) -> Any:
 
 class FAISS_param(FAISS):
 
+    def _build_ivf_search_params(self, id_selector):
+        faiss = dependable_faiss_import()
+        params_cls = None
+        if hasattr(faiss, "SearchParametersIVF"):
+            params_cls = faiss.SearchParametersIVF
+        elif hasattr(faiss, "IVFSearchParameters"):
+            params_cls = faiss.IVFSearchParameters
+
+        if params_cls is None:
+            raise AttributeError("No IVF search parameter class found in faiss module.")
+
+        params = params_cls()
+        params.sel = id_selector
+        return params
+
     def similarity_search_with_score_by_vector(
         self,
         embedding: List[float],
@@ -82,13 +97,28 @@ class FAISS_param(FAISS):
         vector = np.array([embedding], dtype=np.float32)
         if self._normalize_L2:
             faiss.normalize_L2(vector)
-        if kwargs.get("id_selector") is not None:
-            scores, indices = self.index.search(vector, 
-                                                k if filter is None else fetch_k, 
-                                                params=faiss.SearchParametersIVF(sel=kwargs.get("id_selector")))
+        id_selector = kwargs.get("id_selector")
+        manual_id_filter = False
+        search_k = k if filter is None else fetch_k
+
+        if id_selector is not None:
+            search_params = self._build_ivf_search_params(id_selector)
+            try:
+                scores, indices = self.index.search(
+                    vector,
+                    search_k,
+                    params=search_params,
+                )
+            except TypeError:
+                # Some faiss python bindings do not expose `params=` on Index.search.
+                # Fallback: retrieve without params and filter by selector manually.
+                manual_id_filter = True
+                fallback_k = search_k
+                if hasattr(self.index, "ntotal"):
+                    fallback_k = min(max(search_k * 8, search_k), int(self.index.ntotal))
+                scores, indices = self.index.search(vector, fallback_k)
         else:
-            scores, indices = self.index.search(vector, 
-                                                k if filter is None else fetch_k)
+            scores, indices = self.index.search(vector, search_k)
         docs = []
 
         if filter is not None:
@@ -97,6 +127,8 @@ class FAISS_param(FAISS):
         for j, i in enumerate(indices[0]):
             if i == -1:
                 # This happens when not enough docs are returned.
+                continue
+            if manual_id_filter and not id_selector.is_member(int(i)):
                 continue
             _id = self.index_to_docstore_id[i]
             doc = self.docstore.search(_id)
@@ -190,4 +222,3 @@ class FAISS_param(FAISS):
             docs_and_scores.append((doc, scores[0][i]))
 
         return docs_and_scores
-

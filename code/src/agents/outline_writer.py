@@ -10,6 +10,7 @@ from src.utils import tokenCounter, get_index_filter
 from src.prompt import ROUGH_OUTLINE_WITH_SURVEY_PROMPT, MERGING_OUTLINE_WITH_SURVEY_PROMPT, SUBSECTION_OUTLINE_WITH_SURVEY_PROMPT, EDIT_FINAL_OUTLINE_PROMPT_NEW
 import random
 import json
+import re
 
 class outlineWriter():
     
@@ -283,33 +284,136 @@ class outlineWriter():
         return prompt
     
     def extract_title_sections_descriptions(self, outline):
-        title = outline.split('Title: ')[1].split('\n')[0]
+        outline = (outline or "").replace("<format>", "").replace("</format>", "").strip()
+
+        title_match = re.search(r'(?im)^\s*Title\s*[:：]\s*(.+?)\s*$', outline)
+        if title_match:
+            title = title_match.group(1).strip()
+        else:
+            md_title_match = re.search(r'(?m)^\s*#\s+(.+?)\s*$', outline)
+            title = md_title_match.group(1).strip() if md_title_match else "Generated Survey"
+
         sections, descriptions = [], []
-        for i in range(100):
-            if f'Section {i+1}' in outline:
-                sections.append(outline.split(f'Section {i+1}: ')[1].split('\n')[0])
-                if f"1."  not in outline:
-                    descriptions.append(outline.split(f'Description {i+1}: ')[1].split('\n')[0])
-                else:
-                    tmp_context = outline.split(f'Description {i+1}: ')[1]
-                    if f'Section {i+1+1}' in outline:
-                        tmp_context = tmp_context.split(f'Section {i+1+1}: ')[0]
-                    descriptions.append([item.strip() for item in tmp_context.split("\n") if item])
+        section_head_pattern = re.compile(r'(?im)^\s*Section\s*(\d+)\s*[:：\-]\s*(.+?)\s*$')
+        section_matches = list(section_head_pattern.finditer(outline))
+        if section_matches:
+            for idx, m in enumerate(section_matches):
+                section_idx = int(m.group(1))
+                section_title = m.group(2).strip()
+                start = m.end()
+                end = section_matches[idx + 1].start() if idx + 1 < len(section_matches) else len(outline)
+                block = outline[start:end]
+
+                desc_lines = []
+                d = re.search(
+                    rf'(?im)^\s*Description\s*{section_idx}\s*[:：]\s*(.+?)\s*$',
+                    block,
+                )
+                if not d:
+                    d = re.search(r'(?im)^\s*Description(?:\s*\d+)?\s*[:：]\s*(.+?)\s*$', block)
+                if d:
+                    first_desc = d.group(1).strip()
+                    if first_desc:
+                        desc_lines.append(first_desc)
+
+                bullets = re.findall(r'(?m)^\s*\d+\.\s*(.+?)\s*$', block)
+                desc_lines.extend([b.strip() for b in bullets if b.strip()])
+                if not desc_lines:
+                    desc_lines = [section_title]
+
+                sections.append(section_title)
+                descriptions.append(desc_lines)
+            return title, sections, descriptions
+
+        # markdown fallback
+        md_head_pattern = re.compile(r'(?im)^\s*##\s+(.+?)\s*$')
+        md_matches = list(md_head_pattern.finditer(outline))
+        for idx, m in enumerate(md_matches):
+            section_title = re.sub(r'^\d+(?:\.\d+)*\s*', '', m.group(1)).strip()
+            start = m.end()
+            end = md_matches[idx + 1].start() if idx + 1 < len(md_matches) else len(outline)
+            block = outline[start:end]
+            desc_lines = []
+            d = re.search(r'(?im)^\s*Description(?:\s*\d+)?\s*[:：]\s*(.+?)\s*$', block)
+            if d:
+                desc_lines.append(d.group(1).strip())
+            bullets = re.findall(r'(?m)^\s*\d+\.\s*(.+?)\s*$', block)
+            desc_lines.extend([b.strip() for b in bullets if b.strip()])
+            if not desc_lines:
+                desc_lines = [section_title]
+            sections.append(section_title)
+            descriptions.append(desc_lines)
+
         return title, sections, descriptions
     
     def extract_subsections_subdescriptions_points(self, outline):
+        def extract_desc_from_block(block_text, subsection_idx):
+            desc_lines = []
+            # Prefer exact "Description {idx}: ..."
+            m = re.search(
+                rf'(?im)^\s*Description\s*{subsection_idx}\s*[:：]\s*(.+?)\s*$',
+                block_text,
+            )
+            if not m:
+                # Fallback to generic "Description: ..."
+                m = re.search(r'(?im)^\s*Description(?:\s*\d+)?\s*[:：]\s*(.+?)\s*$', block_text)
+            if m:
+                first_desc = m.group(1).strip()
+                if first_desc:
+                    desc_lines.append(first_desc)
+
+            bullets = re.findall(r'(?m)^\s*\d+\.\s*(.+?)\s*$', block_text)
+            desc_lines.extend([b.strip() for b in bullets if b.strip()])
+            if not desc_lines:
+                # Last fallback: keep the first non-empty line in the block.
+                for line in block_text.splitlines():
+                    line = line.strip()
+                    if line and not line.lower().startswith("subsection"):
+                        desc_lines.append(line)
+                        break
+            return desc_lines
+
+        outline = (outline or "").replace("<format>", "").replace("</format>", "").strip()
+        if not outline:
+            return [], []
+
         subsections, subdescriptions = [], []
-        for i in range(100):
-            if f'Subsection {i+1}' in outline:
-                subsections.append(outline.split(f'Subsection {i+1}: ')[1].split('\n')[0])
-                if "1." not in outline:
-                    subdescriptions.append(outline.split(f'Description {i+1}: ')[1].split('\n')[0])
-                else:
-                    tmp_context = outline.split(f'Description {i+1}: ')[1]
-                    if f'Subsection {i+1+1}' in outline:
-                        tmp_context = tmp_context.split(f'Subsection {i+1+1}: ')[0]
-                    subdescriptions.append([item.strip() for item in tmp_context.split("\n") if item])
-        return subsections, subdescriptions
+
+        # Pattern A: "Subsection i: Title" (allow ":" / "：" / "-")
+        subsection_head_pattern = re.compile(
+            r'(?im)^\s*(?:#+\s*)?Subsection\s*(\d+)\s*[:：\-]\s*(.+?)\s*$'
+        )
+        matches = list(subsection_head_pattern.finditer(outline))
+        if matches:
+            for idx, m in enumerate(matches):
+                start = m.end()
+                end = matches[idx + 1].start() if idx + 1 < len(matches) else len(outline)
+                block = outline[start:end]
+                subsection_idx = int(m.group(1))
+                title = m.group(2).strip()
+                if title:
+                    subsections.append(title)
+                    subdescriptions.append(extract_desc_from_block(block, subsection_idx))
+            if subsections:
+                return subsections, subdescriptions
+
+        # Pattern B fallback: markdown heading "### 2.1 xxx" / "### xxx"
+        md_head_pattern = re.compile(r'(?im)^\s*###\s+(.+?)\s*$')
+        md_matches = list(md_head_pattern.finditer(outline))
+        if md_matches:
+            for idx, m in enumerate(md_matches):
+                title = re.sub(r'^\d+(?:\.\d+)*\s*', '', m.group(1)).strip()
+                start = m.end()
+                end = md_matches[idx + 1].start() if idx + 1 < len(md_matches) else len(outline)
+                block = outline[start:end]
+                if title:
+                    subsections.append(title)
+                    subdescriptions.append(extract_desc_from_block(block, idx + 1))
+            if subsections:
+                return subsections, subdescriptions
+
+        # Keep running without crashing if model output is off-format.
+        return [], []
     
     def chunking(self, papers, titles, dates, chunk_size = 14000):
         paper_chunks, title_chunks, date_chunks = [], [], []
@@ -375,12 +479,21 @@ class outlineWriter():
         res += f'# {survey_title}\n\n'
         for i in range(len(survey_sections)):
             section = survey_sections[i]
-            description = "\n".join(survey_section_descriptions[i])
+            section_desc_item = survey_section_descriptions[i]
+            if isinstance(section_desc_item, list):
+                description = "\n".join(section_desc_item)
+            else:
+                description = str(section_desc_item)
             res += f'## {i+1} {section}\nDescription: {description}\n\n'
-            subsections, subsection_descriptions = self.extract_subsections_subdescriptions_points(sub_outlines[i])
+            raw_sub_outline = sub_outlines[i] if i < len(sub_outlines) else ""
+            subsections, subsection_descriptions = self.extract_subsections_subdescriptions_points(raw_sub_outline)
             for j in range(len(subsections)):
                 subsection = subsections[j]
-                sub_description = "\n".join(subsection_descriptions[j])
+                sub_desc_item = subsection_descriptions[j] if j < len(subsection_descriptions) else []
+                if isinstance(sub_desc_item, list):
+                    sub_description = "\n".join(sub_desc_item)
+                else:
+                    sub_description = str(sub_desc_item)
                 res += f'### {i+1}.{j+1} {subsection}\nDescription: {sub_description}\n\n'
         return res
 

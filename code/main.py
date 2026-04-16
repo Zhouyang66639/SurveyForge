@@ -31,7 +31,6 @@ def write(topic, model, section_num, subsection_len, rag_num, refinement):
 
 def write_outline(args, topic, model, ckpt, section_num, outline_reference_num, db, api_key, api_url):
     outline_writer = outlineWriter(args=args, model=model, ckpt=ckpt, api_key=api_key, api_url = api_url, database=db)
-    print(outline_writer.api_model.chat('hello'))
     outline = outline_writer.draft_outline(topic, outline_reference_num, 30000, section_num)
     outline_writer.print_token_usage()
     
